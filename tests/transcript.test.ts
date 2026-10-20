@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssistantMessage, Message, Tool } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, Model, Tool } from "@earendil-works/pi-ai";
 import {
   buildExtraBody,
   getInitialSystemMessages,
@@ -8,6 +8,7 @@ import {
   makeReplayDiagnostic,
   normalizeInputSchema,
   prepareFrames,
+  prepareMessages,
   prepareNativeTranscript,
   prepareTools,
   TOOL_PREFIX,
@@ -218,4 +219,37 @@ test("normalizes tool schemas and builds native generation fields", () => {
     thinking: { type: "disabled" },
     context_management: { edits: [] },
   });
+});
+
+test("normalizes foreign tool call ids and drops foreign reasoning before replay", () => {
+  const id = "call_abc|fc_" + "x".repeat(400);
+  const assistant: AssistantMessage = {
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-5",
+    content: [
+      { type: "thinking", thinking: "", thinkingSignature: "encrypted" },
+      { type: "toolCall", id, name: "read", arguments: { path: "a" } },
+    ],
+    usage,
+    stopReason: "toolUse",
+    timestamp: 1,
+  };
+  const model = { id: "sonnet", api: "claude-code", provider: "claude-code", input: ["text", "image"] } as unknown as Model<any>;
+  const frames = prepareFrames(
+    prepareMessages(
+      [
+        { role: "user", content: "go", timestamp: 0 },
+        assistant,
+        { role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: "A" }], isError: false, timestamp: 2 },
+      ],
+      model,
+    ),
+  );
+
+  const toolUse = frames[1]?.message.content as Array<{ type: string; id: string }>;
+  assert.deepEqual(toolUse.map((block) => block.type), ["tool_use"]);
+  assert.match(toolUse[0]!.id, /^[a-zA-Z0-9_-]{1,64}$/u);
+  assert.equal((frames[2]?.message.content[0] as { tool_use_id: string }).tool_use_id, toolUse[0]!.id);
 });

@@ -6,12 +6,14 @@ import {
   type AssistantMessage,
   type ImageContent,
   type Message,
+  type Model,
   type SimpleStreamOptions,
   type SystemMessage,
   type TextContent,
   type Tool,
   type ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import { transformMessages } from "@earendil-works/pi-ai/api/transform-messages";
 import { supportsAdaptiveThinking } from "./model-catalog.ts";
 import type { NativeContentBlock, NativeFrame, NativeMessage } from "./native-types.ts";
 
@@ -52,6 +54,14 @@ interface AssistantProjection {
 
 function sanitizeSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDFFF]/gu, "\uFFFD");
+}
+
+function nativeToolUseId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+}
+
+export function prepareMessages(messages: Message[], model: Model<any>): Message[] {
+  return transformMessages(messages, model, nativeToolUseId);
 }
 
 function clone<T>(value: T): T {
