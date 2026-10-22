@@ -221,6 +221,43 @@ test("normalizes tool schemas and builds native generation fields", () => {
   });
 });
 
+test("keeps native replay only for the same model without changing the source history", () => {
+  const model = { id: "sonnet", api: "claude-code-stream-json", provider: "claude-code", input: ["text", "image"] } as unknown as Model<any>;
+  const assistant: AssistantMessage = {
+    role: "assistant",
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    content: [
+      { type: "thinking", thinking: "[Reasoning redacted]", thinkingSignature: "opaque", redacted: true },
+      { type: "text", text: "visible" },
+    ],
+    usage,
+    stopReason: "stop",
+    timestamp: 1,
+  };
+  const native = {
+    role: "assistant" as const,
+    content: [
+      { type: "redacted_thinking" as const, data: "opaque" },
+      { type: "text" as const, text: "visible" },
+    ],
+  };
+  assistant.diagnostics = [makeReplayDiagnostic(native, assistant) as never];
+  const messages: Message[] = [
+    { role: "user", content: "go", timestamp: 0 },
+    assistant,
+    { role: "user", content: "again", timestamp: 2 },
+  ];
+  const original = structuredClone(messages);
+
+  const sameModel = prepareFrames(prepareMessages(messages, model));
+  assert.deepEqual(sameModel[1]?.message.content, native.content);
+  const otherModel = prepareFrames(prepareMessages(messages, { ...model, id: "opus" }));
+  assert.deepEqual(otherModel[1]?.message.content, [{ type: "text", text: "visible" }]);
+  assert.deepEqual(messages, original);
+});
+
 test("normalizes foreign tool call ids and drops foreign reasoning before replay", () => {
   const id = "call_abc|fc_" + "x".repeat(400);
   const assistant: AssistantMessage = {
@@ -230,26 +267,33 @@ test("normalizes foreign tool call ids and drops foreign reasoning before replay
     model: "gpt-5",
     content: [
       { type: "thinking", thinking: "", thinkingSignature: "encrypted" },
-      { type: "toolCall", id, name: "read", arguments: { path: "a" } },
+      { type: "thinking", thinking: "inspect the file", thinkingSignature: "foreign-thinking" },
+      { type: "text", text: "checking", textSignature: "foreign-text" },
+      { type: "toolCall", id, name: "read", arguments: { path: "a" }, thoughtSignature: "foreign-tool" },
     ],
     usage,
     stopReason: "toolUse",
     timestamp: 1,
   };
   const model = { id: "sonnet", api: "claude-code", provider: "claude-code", input: ["text", "image"] } as unknown as Model<any>;
-  const frames = prepareFrames(
-    prepareMessages(
-      [
-        { role: "user", content: "go", timestamp: 0 },
-        assistant,
-        { role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: "A" }], isError: false, timestamp: 2 },
-      ],
-      model,
-    ),
-  );
+  const messages: Message[] = [
+    { role: "user", content: "go", timestamp: 0 },
+    assistant,
+    { role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: "A" }], isError: false, timestamp: 2 },
+  ];
+  const original = structuredClone(messages);
+  const prepared = prepareMessages(messages, model);
+  const content = (prepared[1] as AssistantMessage).content;
+  assert.deepEqual(content.slice(0, 2), [
+    { type: "text", text: "inspect the file" },
+    { type: "text", text: "checking" },
+  ]);
+  assert.equal("thoughtSignature" in content[2]!, false);
+  const frames = prepareFrames(prepared);
 
   const toolUse = frames[1]?.message.content as Array<{ type: string; id: string }>;
-  assert.deepEqual(toolUse.map((block) => block.type), ["tool_use"]);
-  assert.match(toolUse[0]!.id, /^[a-zA-Z0-9_-]{1,64}$/u);
-  assert.equal((frames[2]?.message.content[0] as { tool_use_id: string }).tool_use_id, toolUse[0]!.id);
+  assert.deepEqual(toolUse.map((block) => block.type), ["text", "text", "tool_use"]);
+  assert.match(toolUse[2]!.id, /^[a-zA-Z0-9_-]{1,64}$/u);
+  assert.equal((frames[2]?.message.content[0] as { tool_use_id: string }).tool_use_id, toolUse[2]!.id);
+  assert.deepEqual(messages, original);
 });
