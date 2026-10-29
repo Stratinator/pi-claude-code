@@ -375,7 +375,8 @@ export function streamClaudeCode(
       stream.push({ type: "start", partial: output });
       const response = await runClaudeRequest({
         model: nativeModel(model.id),
-        cwd: process.cwd(),
+        // A host running agents in several directories names each request's in metadata.
+        cwd: typeof options?.metadata?.cwd === "string" ? options.metadata.cwd : process.cwd(),
         frames,
         systemPrompt,
         manifest: preparedTools.manifest,
