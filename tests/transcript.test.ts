@@ -69,6 +69,31 @@ test("prepares replay frames and groups tool results", () => {
   assert.equal(frames[2]?.shouldQuery, undefined);
 });
 
+test("continues a conversation that another provider started", () => {
+  const openaiId = "call_49ce|fc_0413+adea";
+  const openai: AssistantMessage = {
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-6.1-sol",
+    content: [
+      { type: "thinking", thinking: "plan the call", thinkingSignature: '{"encrypted_content":"opaque"}' },
+      { type: "toolCall", id: openaiId, name: "list", arguments: {} },
+    ],
+    usage,
+    stopReason: "toolUse",
+    timestamp: 1,
+  };
+  const frames = prepareFrames([
+    { role: "user", content: "list runs", timestamp: 0 },
+    openai,
+    { role: "toolResult", toolCallId: openaiId, toolName: "list", content: [{ type: "text", text: "[]" }], isError: false, timestamp: 2 },
+  ]);
+
+  assert.deepEqual(frames[1]?.message.content, [{ type: "tool_use", id: "call_49ce_fc_0413_adea", name: `${TOOL_PREFIX}list`, input: {} }]);
+  assert.equal((frames[2]?.message.content[0] as { tool_use_id: string }).tool_use_id, "call_49ce_fc_0413_adea");
+});
+
 test("replays native signed blocks only while the visible projection is unchanged", () => {
   const assistant: AssistantMessage = {
     role: "assistant",

@@ -12,7 +12,7 @@ import {
   type Tool,
   type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { supportsAdaptiveThinking } from "./model-catalog.ts";
+import { PROVIDER_ID, supportsAdaptiveThinking } from "./model-catalog.ts";
 import type { NativeContentBlock, NativeFrame, NativeMessage } from "./native-types.ts";
 
 export const TOOL_PREFIX = "mcp__pi__";
@@ -52,6 +52,14 @@ interface AssistantProjection {
 
 function sanitizeSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDFFF]/gu, "\uFFFD");
+}
+
+/**
+ * Anthropic requires tool-call IDs matching ^[a-zA-Z0-9_-]+$ (max 64); other providers' IDs
+ * (OpenAI's contain `|`) do not. Claude's own IDs pass unchanged, so calls and results still pair.
+ */
+function anthropicToolId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
 function clone<T>(value: T): T {
@@ -138,7 +146,8 @@ function canonicalAssistantContent(message: AssistantMessage): NativeContentBloc
   for (const block of message.content) {
     if (block.type === "text" && block.text.trim()) {
       blocks.push({ type: "text", text: sanitizeSurrogates(block.text) });
-    } else if (block.type === "thinking" && block.thinking.trim() && block.thinkingSignature) {
+    } else if (block.type === "thinking" && block.thinking.trim() && block.thinkingSignature && message.provider === PROVIDER_ID) {
+      // Signatures are only valid for Claude; another provider's (OpenAI's encrypted reasoning) is rejected.
       if (block.redacted) {
         blocks.push({ type: "redacted_thinking", data: block.thinkingSignature });
       } else {
@@ -151,7 +160,7 @@ function canonicalAssistantContent(message: AssistantMessage): NativeContentBloc
     } else if (block.type === "toolCall") {
       blocks.push({
         type: "tool_use",
-        id: block.id,
+        id: anthropicToolId(block.id),
         name: `${TOOL_PREFIX}${block.name}`,
         input: clone(block.arguments) as Record<string, unknown>,
       });
@@ -198,7 +207,7 @@ export function prepareFrames(messages: Message[]): NativeFrame[] {
       blocks = [
         {
           type: "tool_result",
-          tool_use_id: message.toolCallId,
+          tool_use_id: anthropicToolId(message.toolCallId),
           content: toolResultContent(message),
           is_error: message.isError,
         },
