@@ -205,6 +205,10 @@ test("normalizes tool schemas and builds native generation fields", () => {
   const prepared = prepareTools(tools);
   assert.equal(prepared.manifest[0]?.name, "probe");
   assert.equal(prepared.nativeTools[0]?.name, `${TOOL_PREFIX}probe`);
+  // A nullable property stays nullable, so the model can send null instead of the string "null".
+  assert.deepEqual((prepared.nativeTools[0]?.input_schema as { properties: unknown }).properties, {
+    value: { anyOf: [{ type: "string" }, { type: "null" }] },
+  });
   assert.deepEqual(
     normalizeInputSchema({ oneOf: [{ type: "object" }, { type: "string" }] }),
     { type: "object", properties: {} },

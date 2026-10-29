@@ -260,34 +260,13 @@ export function prepareFrames(messages: Message[]): NativeFrame[] {
   return frames;
 }
 
-function withoutNullVariant(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(withoutNullVariant);
-  if (!schema || typeof schema !== "object") return schema;
-
-  const input = schema as Record<string, unknown>;
-  const output: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) output[key] = withoutNullVariant(value);
-
-  if (Array.isArray(output.type) && output.type.includes("null")) {
-    const remaining = output.type.filter((value) => value !== "null");
-    output.type = remaining.length === 1 ? remaining[0] : remaining;
-  }
-
-  if (Array.isArray(output.anyOf)) {
-    const nonNull = output.anyOf.filter(
-      (branch) => !(branch && typeof branch === "object" && (branch as Record<string, unknown>).type === "null"),
-    );
-    if (nonNull.length === 1 && nonNull.length !== output.anyOf.length) {
-      const replacement = nonNull[0];
-      delete output.anyOf;
-      if (replacement && typeof replacement === "object") Object.assign(output, replacement);
-    }
-  }
-  return output;
-}
-
+/**
+ * A tool's input schema must be an object at the top level, so top-level composition is dropped. Nested
+ * schemas pass unchanged: Anthropic accepts nullable properties, and dropping their null variant makes the
+ * model send the string "null" for a value that should be null.
+ */
 export function normalizeInputSchema(schema: unknown): Record<string, unknown> {
-  const normalized = withoutNullVariant(schema) as Record<string, unknown>;
+  const normalized = { ...(schema as Record<string, unknown>) };
   for (const key of ["oneOf", "allOf", "anyOf"]) delete normalized[key];
   if (!normalized.type) normalized.type = "object";
   if (normalized.type === "object" && (!normalized.properties || typeof normalized.properties !== "object")) {

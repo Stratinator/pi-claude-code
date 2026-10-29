@@ -85,8 +85,9 @@ Foundry override for Claude Code.
 - Branching, editing earlier messages, or changing settings mid-conversation
   starts a fresh Claude Code process that replays the conversation. The first
   response after that can be slower and may use more quota.
-- Complex tool schemas (nullable types, `oneOf`, `allOf`, `anyOf`) may be
-  simplified before Claude sees them.
+- Top-level composition in a tool schema (`oneOf`, `allOf`, `anyOf`) is
+  removed before Claude sees it; nested schemas, nullable ones included, pass
+  unchanged.
 - Adding or removing tools in the middle of a conversation keeps the prompt
   cache only on supported models. On other models it may use more quota.
 

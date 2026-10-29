@@ -79,8 +79,10 @@ tool execution. In particular, it:
 
 ## Tool schemas
 
-Tool schemas are normalized for Claude Code. Nullable variants and schema
-composition such as `oneOf`, `allOf`, and `anyOf` may be simplified or removed.
+Tool schemas are normalized for Claude Code: the top level must be an object,
+so top-level `oneOf`, `allOf`, and `anyOf` are removed. Nested schemas pass
+unchanged; Anthropic accepts nullable properties, and removing their null
+variant made the model send the string "null" instead of null.
 
 Exact mid-conversation tool additions and removals, including prompt-cache
 preservation, work only on supported models. Other cases fall back to the
