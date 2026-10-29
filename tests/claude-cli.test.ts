@@ -10,7 +10,10 @@ import {
   rewriteInitialRequest,
   runClaudeRequest,
 } from "../src/claude-cli.ts";
+import type { TranscriptContext } from "@earendil-works/pi-ai";
+import { CLAUDE_CODE_MODELS } from "../src/model-catalog.ts";
 import { createClaudeCodeProvider } from "../src/provider.ts";
+import { streamClaudeCode } from "../src/stream.ts";
 
 test("stabilizes Claude Code's native replay reminders and cache breakpoint", () => {
   const canonical = [{ type: "text", text: "inspect" }];
@@ -266,6 +269,15 @@ for await (const line of input) {
     assert.equal(result.usage.input_tokens, 3);
     assert.equal(result.relay.upstreamRequests, 0);
     assert.equal(events.at(-1), "message_stop");
+
+    // The model runs in the directory the host names in metadata, not the host process's.
+    const streamed = await streamClaudeCode(
+      CLAUDE_CODE_MODELS.find((model) => model.id === "claude-sonnet-5")!,
+      { messages: [{ role: "user", content: "hi", timestamp: 0 }] } as unknown as TranscriptContext,
+      { metadata: { cwd: workingRoot }, timeoutMs: 5_000, cacheRetention: "none",
+        env: { PI_CLAUDE_CODE_COMMAND: executable, EXPECTED_CWD: workingRoot, EXPECTED_SYSTEM_PROMPT: "" } },
+    ).result();
+    assert.equal(streamed.stopReason, "stop", streamed.errorMessage);
 
     const processLog = join(root, "processes.log");
     const common = {
