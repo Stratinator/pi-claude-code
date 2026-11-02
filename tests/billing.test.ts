@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import * as http from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { isRetryableAssistantError, type AssistantMessage } from "@earendil-works/pi-ai";
@@ -124,6 +125,78 @@ for await (const line of input) {
     assert.equal(allowed.rateLimit?.isUsingOverage, true);
   } finally {
     await closeClaudeProcesses();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an upstream stream that drops before message_stop is retryable, an upstream error event decides its own", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "pi-claude-code-drop-")));
+  const executable = join(root, "fake-claude.mjs");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+import readline from "node:readline";
+if (process.argv.includes("auth") && process.argv.includes("status")) {
+  console.log(JSON.stringify({loggedIn: true, authMethod: "claude.ai", subscriptionType: "max"}));
+  process.exit(0);
+}
+const input = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+for await (const line of input) {
+  const frame = JSON.parse(line);
+  if (frame.type !== "user") continue;
+  try {
+    const response = await fetch(process.env.ANTHROPIC_BASE_URL + "/v1/messages", {method: "POST", body: "{}"});
+    await response.text();
+  } catch {}
+  console.log(JSON.stringify({type: "result", subtype: "error_during_execution", is_error: true}));
+}
+`,
+    "utf8",
+  );
+  await chmod(executable, 0o755);
+  const usage = { input_tokens: 2, output_tokens: 0 };
+  const start = `data: ${JSON.stringify({ type: "message_start", message: { id: "m1", role: "assistant", content: [], usage } })}\n\n`;
+  const upstream = http.createServer(async (request, response) => {
+    for await (const _chunk of request);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    if (request.url?.startsWith("/drop/")) {
+      response.write(start);
+      setTimeout(() => response.destroy(), 20);
+    } else {
+      const error = { type: "error", error: { type: "invalid_request_error", message: "messages: bad shape" } };
+      response.end(`${start}data: ${JSON.stringify(error)}\n\n`);
+    }
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const { port } = upstream.address() as { port: number };
+  const request = (path: string) =>
+    runClaudeRequest({
+      model: "sonnet",
+      cwd: root,
+      frames: [{ type: "user", message: { role: "user", content: [{ type: "text", text: "hi" }] } }],
+      systemPrompt: "system",
+      manifest: [],
+      extraBody: { tools: [] },
+      toolNames: new Set(),
+      env: { PI_CLAUDE_CODE_COMMAND: executable },
+      upstreamUrl: `http://127.0.0.1:${port}${path}`,
+      timeoutMs: 5_000,
+    });
+  const retryable = async (path: string) => {
+    let message = "";
+    await assert.rejects(request(path), (error: Error) => ((message = normalizeError(error)), true));
+    return { message, retryable: isRetryableAssistantError(failedMessage(message)) };
+  };
+
+  try {
+    const dropped = await retryable("/drop");
+    assert.equal(dropped.retryable, true, dropped.message);
+    const rejected = await retryable("/error");
+    assert.equal(rejected.retryable, false, rejected.message);
+    assert.match(rejected.message, /messages: bad shape/);
+  } finally {
+    await closeClaudeProcesses();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
 });
